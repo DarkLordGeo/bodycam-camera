@@ -69,7 +69,9 @@ class ShaderComposerTest {
         )
         FilterRegistry.register(custom)
         val c = ShaderComposer.compose(FilterRegistry["test_custom"]!!, QualityTier.HIGH)
-        assertEquals(listOf("uExposure", "uExposureDrift", "uVignette"), c.paramKeys)
+        assertEquals(listOf("uExposure", "uExposureDrift", "uVignette"), c.paramKeys.take(3))
+        assertTrue("global outline appended", "uOutline" in c.paramKeys)
+        assertTrue(c.fragmentSource.contains("fx_personOutline"))
         assertEquals(0.9f, custom.param("uVignette")!!.default, 1e-6f)
     }
 

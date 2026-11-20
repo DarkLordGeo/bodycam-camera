@@ -32,7 +32,7 @@ object CctvPreset {
             Effects.monochrome, Effects.sensorNoise, Effects.grain, Effects.vignette,
         ),
         defaults = mapOf(
-            "uDistortion" to 0.22f, "uFisheye" to 0.05f, "uFov" to 1f,
+            "uDistortion" to 0.22f, "uFisheye" to 0.05f, "uLensFill" to 1f,
             "uExposureDrift" to 0.1f, "uContrast" to 1.25f, "uBlackPoint" to 0.04f, "uShoulder" to 0.1f,
             "uSaturation" to 0.4f, "uMonoAmount" to 0.55f, "uMonoHue" to 0.45f, "uMonoTint" to 0.15f,
             "uSensorNoise" to 0.55f, "uLowLight" to 0.6f, "uGrain" to 0.35f, "uGrainSize" to 1.8f,
@@ -53,7 +53,7 @@ object NightVisionPreset {
             Effects.sensorNoise, Effects.grain, Effects.vignette, Effects.motionBlur,
         ),
         defaults = mapOf(
-            "uDistortion" to 0.15f, "uFisheye" to 0.05f, "uFov" to 1f,
+            "uDistortion" to 0.15f, "uFisheye" to 0.05f, "uLensFill" to 0.2f,
             "uExposure" to 1.0f, "uExposureDrift" to 0.15f, "uContrast" to 1.2f, "uShoulder" to 0.6f,
             "uMonoAmount" to 1f, "uMonoHue" to 0.33f, "uMonoTint" to 0.9f,
             "uSensorNoise" to 0.7f, "uLowLight" to 0.2f, "uGrain" to 0.5f, "uGrainSize" to 1.6f,

@@ -7,6 +7,21 @@ import com.darklordgeo.bodycamfx.filters.FilterPreset
  * names, badge or serial numbers, and the label defaults to a neutral "FX CAM" so footage is not
  * presented as genuine law-enforcement evidence.
  */
+/** People outline overlay (global, works with every preset). */
+data class OutlineConfig(
+    val enabled: Boolean = false,
+    val hue: Float = 0f,
+    val white: Boolean = false,
+    val width: Float = 2.5f,
+) {
+    fun uniforms(): Map<String, Float> = mapOf(
+        "uOutline" to if (enabled) 1f else 0f,
+        "uOutlineHue" to hue,
+        "uOutlineWhite" to if (white) 1f else 0f,
+        "uOutlineWidth" to width,
+    )
+}
+
 data class HudConfig(
     val enabled: Boolean = false,
     val showTimestamp: Boolean = true,
@@ -25,11 +40,12 @@ class RenderState(
 ) {
     companion object {
         fun of(preset: FilterPreset, raw: Map<String, Float>, intensity: Float, hud: HudConfig,
-               recording: Boolean = false, recordingStartedAtMs: Long = 0L): RenderState {
+               recording: Boolean = false, recordingStartedAtMs: Long = 0L,
+               globals: Map<String, Float> = emptyMap()): RenderState {
             val eff = preset.params.associate { p ->
                 p.key to p.effective(raw[p.key] ?: p.default, intensity)
             }
-            return RenderState(preset, eff, hud, recording, recordingStartedAtMs)
+            return RenderState(preset, eff + globals, hud, recording, recordingStartedAtMs)
         }
     }
 }

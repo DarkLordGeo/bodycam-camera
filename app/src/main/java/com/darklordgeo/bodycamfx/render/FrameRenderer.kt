@@ -29,6 +29,9 @@ class FrameRenderer(private val onShaderError: (String) -> Unit) {
         val locRes: Int,
         val locTime: Int,
         val locFrame: Int,
+        val locMask: Int,
+        val locMaskRotation: Int,
+        val locMaskValid: Int,
         val usesHistory: Boolean,
     )
 
@@ -46,6 +49,11 @@ class FrameRenderer(private val onShaderError: (String) -> Unit) {
     val hud = HudOverlay()
 
     private var targets = arrayOfNulls<RenderTarget>(2)
+
+    /** Person segmentation mask (R8), uploaded by the processor. 0 = none. */
+    var maskTexture = 0
+    var maskRotation = 0f
+    var maskValid = 0f
     private var current = 0
 
     /** Texture of the most recent processed frame (0 if none yet). */
@@ -67,6 +75,9 @@ class FrameRenderer(private val onShaderError: (String) -> Unit) {
                 locRes = GLES30.glGetUniformLocation(p, "uResolution"),
                 locTime = GLES30.glGetUniformLocation(p, "uTime"),
                 locFrame = GLES30.glGetUniformLocation(p, "uFrame"),
+                locMask = GLES30.glGetUniformLocation(p, "uPersonMask"),
+                locMaskRotation = GLES30.glGetUniformLocation(p, "uMaskRotation"),
+                locMaskValid = GLES30.glGetUniformLocation(p, "uMaskValid"),
                 usesHistory = composed.usesHistory,
             ).also { programs[key] = it }
         } catch (t: Throwable) {
@@ -112,6 +123,12 @@ class FrameRenderer(private val onShaderError: (String) -> Unit) {
         GLES30.glActiveTexture(GLES30.GL_TEXTURE1)
         GLES30.glBindTexture(GLES30.GL_TEXTURE_2D, if (fp.usesHistory) historyTex else 0)
         GLES30.glUniform1i(fp.locHistory, 1)
+
+        GLES30.glActiveTexture(GLES30.GL_TEXTURE2)
+        GLES30.glBindTexture(GLES30.GL_TEXTURE_2D, maskTexture)
+        GLES30.glUniform1i(fp.locMask, 2)
+        GLES30.glUniform1f(fp.locMaskRotation, maskRotation)
+        GLES30.glUniform1f(fp.locMaskValid, if (maskTexture != 0) maskValid else 0f)
 
         GLES30.glUniformMatrix4fv(fp.locSt, 1, false, stMatrix, 0)
         GLES30.glUniform2f(fp.locRes, target.width.toFloat(), target.height.toFloat())

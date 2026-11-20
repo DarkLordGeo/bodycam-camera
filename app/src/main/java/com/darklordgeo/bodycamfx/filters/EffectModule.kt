@@ -9,7 +9,7 @@ package com.darklordgeo.bodycamfx.filters
  *  COLOR    – per-pixel colour operations, applied in list order.         `color = fx(color, uv);`
  *  TEMPORAL – blends with the previous processed frame (motion blur).     `color = fx(color);`
  */
-enum class Stage { UV, SAMPLE, COLOR, TEMPORAL }
+enum class Stage { UV, SAMPLE, COLOR, TEMPORAL, OVERLAY }
 
 /** Device rendering tiers. Modules declare the minimum tier they need. */
 enum class QualityTier { LOW, BALANCED, HIGH }

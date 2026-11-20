@@ -86,6 +86,53 @@ class GlFilterProcessor(context: Context, private val listener: Listener) : Surf
     private var slowStreak = 0
     private var frameCostEmaMs = 0f
 
+    // person mask
+    private var maskTex = 0
+    private var maskW = 0
+    private var maskH = 0
+    private var maskUpdatedAt = 0L
+    @Volatile var outlineEnabled: Boolean = false
+
+    /** Called from the analysis thread with a w*h confidence mask (0..255), upright for [rotation]. */
+    fun updatePersonMask(bytes: ByteBuffer, w: Int, h: Int, rotation: Int) {
+        handler.post {
+            if (released || egl == null) return@post
+            egl?.makePbufferCurrent()
+            if (maskTex == 0 || w != maskW || h != maskH) {
+                GlUtil.deleteTexture(maskTex)
+                val t = IntArray(1)
+                GLES30.glGenTextures(1, t, 0)
+                maskTex = t[0]
+                GLES30.glBindTexture(GLES30.GL_TEXTURE_2D, maskTex)
+                GLES30.glTexParameteri(GLES30.GL_TEXTURE_2D, GLES30.GL_TEXTURE_MIN_FILTER, GLES30.GL_LINEAR)
+                GLES30.glTexParameteri(GLES30.GL_TEXTURE_2D, GLES30.GL_TEXTURE_MAG_FILTER, GLES30.GL_LINEAR)
+                GLES30.glTexParameteri(GLES30.GL_TEXTURE_2D, GLES30.GL_TEXTURE_WRAP_S, GLES30.GL_CLAMP_TO_EDGE)
+                GLES30.glTexParameteri(GLES30.GL_TEXTURE_2D, GLES30.GL_TEXTURE_WRAP_T, GLES30.GL_CLAMP_TO_EDGE)
+                maskW = w
+                maskH = h
+            }
+            GLES30.glBindTexture(GLES30.GL_TEXTURE_2D, maskTex)
+            GLES30.glPixelStorei(GLES30.GL_UNPACK_ALIGNMENT, 1)
+            bytes.rewind()
+            GLES30.glTexImage2D(GLES30.GL_TEXTURE_2D, 0, GLES30.GL_R8, w, h, 0, GLES30.GL_RED, GLES30.GL_UNSIGNED_BYTE, bytes)
+            renderer?.maskTexture = maskTex
+            renderer?.maskRotation = rotation.toFloat()
+            maskUpdatedAt = SystemClock.elapsedRealtime()
+        }
+    }
+
+    /** Fades the outline out if segmentation stops delivering (camera switch, outline off). */
+    private fun updateMaskValidity() {
+        val r = renderer ?: return
+        val age = SystemClock.elapsedRealtime() - maskUpdatedAt
+        r.maskValid = when {
+            !outlineEnabled || maskTex == 0 -> 0f
+            age < 400 -> 1f
+            age < 1000 -> 1f - (age - 400) / 600f
+            else -> 0f
+        }
+    }
+
     private class PhotoRequest(val callback: (Bitmap?) -> Unit)
     private var pendingPhoto: PhotoRequest? = null
 
@@ -204,6 +251,7 @@ class GlFilterProcessor(context: Context, private val listener: Listener) : Surf
             val now = System.currentTimeMillis()
             frameIndex++
 
+            updateMaskValidity()
             val proc = processingSize(slot.size, tier)
             val tex = r.processLive(state, tier, slot.texture, stMatrix, proc.width, proc.height,
                 timeSec, frameIndex, liveRotation(), now, mirrorOutput)
@@ -381,6 +429,8 @@ class GlFilterProcessor(context: Context, private val listener: Listener) : Surf
                     GlUtil.deleteTexture(it.texture)
                 }
                 input = null
+                GlUtil.deleteTexture(maskTex)
+                maskTex = 0
                 renderer?.release()
                 egl?.release()
             } catch (t: Throwable) {

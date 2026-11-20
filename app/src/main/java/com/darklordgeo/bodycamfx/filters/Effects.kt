@@ -6,14 +6,19 @@ package com.darklordgeo.bodycamfx.filters
  */
 object Effects {
 
-    /** Barrel + fisheye distortion with frame-filling normalisation and a field-of-view crop. */
+    /**
+     * Wide-angle barrel + fisheye lens. The centre keeps (close to) its natural scale and the edges
+     * bend away, like a real ultra-wide body camera; whatever falls outside the sensor image becomes
+     * soft dark corners. [uLensFill] trades dark corners for centre zoom (1 = fill the frame).
+     */
     val lens = EffectModule(
         id = "lens",
         stage = Stage.UV,
         params = listOf(
-            ParamSpec("uDistortion", "Lens distortion", 0f, 1f, 0.2f, 0f, "Lens"),
-            ParamSpec("uFisheye", "Fisheye", 0f, 1f, 0.1f, 0f, "Lens"),
-            ParamSpec("uFov", "Field of view", 0.75f, 1f, 0.96f, 1f, "Lens"),
+            ParamSpec("uDistortion", "Lens distortion", 0f, 1f, 0.15f, 0f, "Lens"),
+            ParamSpec("uFisheye", "Fisheye", 0f, 1f, 0.2f, 0f, "Lens"),
+            ParamSpec("uLensFill", "Corner fill", 0f, 1f, 0.45f, 0.45f, "Lens"),
+            ParamSpec("uFov", "Zoom crop", 0.75f, 1f, 1f, 1f, "Lens"),
         ),
         glsl = """
             vec2 fx_lens(vec2 p) {
@@ -23,11 +28,9 @@ object Effects {
                 float r2 = dot(d, d);
                 vec2 corner = vec2(0.5 * aspect, 0.5);
                 float rm2 = dot(corner, corner);
-                // Normalise so the corners always land inside the sensor image: centre bulges,
-                // edges compress, and no black borders appear.
                 float f  = 1.0 + uDistortion * r2  + uFisheye * r2 * r2;
                 float fm = 1.0 + uDistortion * rm2 + uFisheye * rm2 * rm2;
-                d *= (f / fm) * uFov;
+                d *= (f / mix(1.0, fm, uLensFill)) * uFov;
                 d.x /= aspect;
                 return d + 0.5;
             }
@@ -242,6 +245,98 @@ object Effects {
         """.trimIndent(),
         call = "color = fx_vignette(color);",
     )
+
+    /** Highlight bloom: bright light sources glow and bleed, like a small sensor with a cheap lens. */
+    val bloom = EffectModule(
+        id = "bloom",
+        stage = Stage.COLOR,
+        params = listOf(ParamSpec("uBloom", "Highlight bloom", 0f, 1f, 0.4f, 0f, "Lens")),
+        glsl = """
+            vec3 fx_bloom(vec3 c, vec2 p) {
+                vec2 r = vec2(0.011 * uResolution.y / uResolution.x, 0.011);
+                vec3 acc = vec3(0.0);
+                for (int i = 0; i < 6; i++) {
+                    float a = float(i) * 1.0472 + 0.3;
+                    vec2 o = vec2(cos(a), sin(a)) * r * (1.0 + 0.8 * float(i & 1));
+                    acc += max(sampleRaw(p + o) - 0.7, 0.0);
+                }
+                acc /= 6.0;
+                vec3 self = max(c - 0.78, 0.0);
+                return c + (acc * 2.4 + self * 0.9) * uBloom;
+            }
+        """.trimIndent(),
+        call = "color = fx_bloom(color, uv);",
+        minTier = QualityTier.BALANCED,
+    )
+
+    /** Video-codec artefacts: 8x8 block chroma smearing and faint luma blocking in flat areas. */
+    val compression = EffectModule(
+        id = "compression",
+        stage = Stage.COLOR,
+        params = listOf(ParamSpec("uCompression", "Compression", 0f, 1f, 0.3f, 0f, "Detail")),
+        glsl = """
+            vec3 fx_compression(vec3 c, vec2 p) {
+                vec2 blocks = uResolution / 8.0;
+                vec2 bc = (floor(p * blocks) + 0.5) / blocks;
+                vec3 b = sampleRaw(bc);
+                float l = luma(c);
+                float lb = luma(b);
+                vec3 chroma = mix(c - l, b - lb, uCompression * 0.75);
+                return mix(l, lb, uCompression * 0.12) + chroma;
+            }
+        """.trimIndent(),
+        call = "color = fx_compression(color, uv);",
+    )
+
+    /**
+     * Global overlay: outer outline around people, from the on-device segmentation mask
+     * (uPersonMask, uploaded by the processor). Applied to every preset when People Outline is on.
+     */
+    val personOutline = EffectModule(
+        id = "personOutline",
+        stage = Stage.OVERLAY,
+        params = listOf(
+            ParamSpec("uOutline", "Outline", 0f, 1f, 0f, 0f, "Outline"),
+            ParamSpec("uOutlineWidth", "Outline width", 1f, 6f, 2.5f, 2.5f, "Outline"),
+            ParamSpec("uOutlineHue", "Outline hue", 0f, 1f, 0f, 0f, "Outline"),
+            ParamSpec("uOutlineWhite", "Outline white", 0f, 1f, 0f, 0f, "Outline"),
+        ),
+        glsl = """
+            vec2 fx_maskUv(vec2 p) {
+                float bx = p.x;
+                float by = 1.0 - p.y;
+                int r = int(uMaskRotation + 0.5);
+                if (r == 90) return vec2(1.0 - by, bx);
+                if (r == 180) return vec2(1.0 - bx, 1.0 - by);
+                if (r == 270) return vec2(by, 1.0 - bx);
+                return vec2(bx, by);
+            }
+            float fx_person(vec2 p) { return texture(uPersonMask, fx_maskUv(clamp(p, 0.0, 1.0))).r; }
+            vec3 fx_personOutline(vec3 c, vec2 p) {
+                if (uOutline <= 0.001 || uMaskValid <= 0.001) return c;
+                vec2 px = uOutlineWidth / vec2(textureSize(uPersonMask, 0));
+                float m = fx_person(p);
+                float near = 0.0;
+                float far = 0.0;
+                for (int i = 0; i < 8; i++) {
+                    float a = float(i) * 0.7853982;
+                    vec2 o = vec2(cos(a), sin(a)) * px;
+                    near = max(near, fx_person(p + o));
+                    far = max(far, fx_person(p + o * 2.2));
+                }
+                float inside = smoothstep(0.4, 0.6, m);
+                float line = smoothstep(0.4, 0.6, near) * (1.0 - inside);
+                float glow = smoothstep(0.4, 0.6, far) * (1.0 - inside) * 0.35;
+                vec3 col = mix(hue2rgb(uOutlineHue), vec3(1.0), uOutlineWhite);
+                float alpha = clamp(line + glow, 0.0, 1.0) * uOutline * uMaskValid;
+                return mix(c, col, alpha);
+            }
+        """.trimIndent(),
+        call = "color = fx_personOutline(color, uv);",
+    )
+
+    /** Modules appended to every preset (driven by app settings, not by the preset). */
+    val globals: List<EffectModule> get() = listOf(personOutline)
 
     /** Frame-feedback motion blur: blends with the previous processed frame. */
     val motionBlur = EffectModule(
