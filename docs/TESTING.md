@@ -22,12 +22,16 @@ Use this checklist after installing the APK:
 - [ ] Video: filter visible in the recorded file; audio in sync; portrait and landscape recordings play upright.
 - [ ] HUD on: identical overlay in preview, video and photo, upright in both orientations.
 - [ ] Switch cameras repeatedly; background/foreground the app during preview and during recording (the recording should finalise and save).
+- [ ] People outline: toggle in the top bar; outline follows people at 1–4 m, fades when nobody is in view; appears in saved photo/video.
+- [ ] Photo proportions match the viewfinder (Settings → About shows the camera stream size).
 - [ ] Ultra-wide: BODYCAM jumps to 0.5–0.6× on phones with an ultra-wide lens.
 - [ ] Gallery: new captures appear without a refresh; delete photo/video with confirmation; viewer zoom/swipe/playback/share.
 - [ ] Media visible in Google Photos under BODYCAM folders.
 - [ ] 4K on a mid-range device: Auto quality should step down if frames are slow.
 
 ## Known limitations
+
+- **People outline** uses the ML Kit *selfie* segmentation model. It is fast and bundled, but tuned for people near the camera, so distant or small figures may be missed. If a device can't run a third camera stream beside preview and video, the app keeps the camera working and shows a notice.
 
 - **Photo resolution = video stream resolution** (up to 4K, capped by GPU texture size). It does not use the sensor's full still resolution, because photos come from the same GPU frame as the preview to guarantee an identical look.
 - **Front camera HUD with mirroring off**: the preview is always mirrored, so HUD text reads backwards in the viewfinder (saved media is correct).
