@@ -40,7 +40,18 @@ jobs:
           done
 
       - name: Build release APK
-        run: ./gradlew :app:assembleRelease --stacktrace
+        run: ./gradlew :app:assembleRelease --stacktrace 2>&1 | tee build-log.txt; exit ${PIPESTATUS[0]}
+        shell: bash
+
+      - name: Publish build log on failure
+        if: failure()
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: failed-${{ github.run_number }}
+          name: Failed build ${{ github.run_number }}
+          files: build-log.txt
+          prerelease: true
+          make_latest: false
 
       - name: Collect outputs
         run: |
@@ -75,14 +86,16 @@ jobs:
           java-version: 17
       - uses: gradle/actions/setup-gradle@v4
       - name: Record Compose screenshots (Robolectric + Roborazzi)
+        shell: bash
         run: |
           chmod +x gradlew
-          ./gradlew :app:testDebugUnitTest --tests "com.darklordgeo.bodycamfx.ui.*" -Proborazzi.test.record=true --stacktrace
+          ./gradlew :app:testDebugUnitTest --tests "com.darklordgeo.bodycamfx.ui.*" -Pscreenshots=true --stacktrace 2>&1 | tee out-shots-log.txt; exit ${PIPESTATUS[0]}
       - name: Zip screenshots
         if: always()
         run: |
           mkdir -p out
-          find app -path '*roborazzi*' -name '*.png' -exec cp {} out/ \; || true
+          cp app/build/screenshots/*.png out/ || true
+          cp out-shots-log.txt out/screenshot-log.txt || true
           ls out
       - name: Attach screenshots to the build release
         if: always()
@@ -90,5 +103,7 @@ jobs:
         with:
           tag_name: build-${{ github.run_number }}
           name: Bodycam FX build ${{ github.run_number }}
-          files: out/*.png
+          files: |
+            out/*.png
+            out/screenshot-log.txt
           fail_on_unmatched_files: false

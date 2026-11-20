@@ -4,6 +4,8 @@ plugins {
     id("org.jetbrains.kotlin.plugin.compose")
 }
 
+// -Pscreenshots=true enables Robolectric/Roborazzi screenshot tests (kept out of the main build).
+val screenshots = providers.gradleProperty("screenshots").isPresent
 val ciBuildNumber = System.getenv("GITHUB_RUN_NUMBER")?.toIntOrNull() ?: 1
 
 android {
@@ -55,6 +57,15 @@ android {
     }
     testOptions {
         unitTests.isReturnDefaultValues = true
+        unitTests.isIncludeAndroidResources = screenshots
+        unitTests.all {
+            if (screenshots) it.systemProperty("roborazzi.test.record", "true")
+        }
+    }
+    sourceSets {
+        getByName("test") {
+            if (screenshots) java.srcDir("src/screenshotTest/java")
+        }
     }
 }
 
@@ -77,5 +88,15 @@ dependencies {
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.9.0")
     implementation("androidx.concurrent:concurrent-futures-ktx:1.2.0")
 
+    implementation("dev.chrisbanes.haze:haze:1.2.2")
+
     testImplementation("junit:junit:4.13.2")
+    if (screenshots) {
+        testImplementation("org.robolectric:robolectric:4.14.1")
+        testImplementation("io.github.takahirom.roborazzi:roborazzi:1.44.0-alpha02")
+        testImplementation("io.github.takahirom.roborazzi:roborazzi-compose:1.44.0-alpha02")
+        testImplementation("androidx.compose.ui:ui-test-junit4")
+        testImplementation("androidx.test:core:1.6.1")
+        debugImplementation("androidx.compose.ui:ui-test-manifest")
+    }
 }
