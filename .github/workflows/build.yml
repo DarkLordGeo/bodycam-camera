@@ -32,8 +32,7 @@ jobs:
 
       - name: Validate every composed GLSL shader with glslang
         run: |
-          sudo apt-get update -qq
-          sudo apt-get install -y -qq glslang-tools
+          for i in 1 2 3; do sudo apt-get update -qq && sudo apt-get install -y -qq glslang-tools && break; sleep 10; done
           for f in app/build/shaders/device/*.frag app/build/shaders/device/*.vert; do
             echo "== $f"
             glslangValidator "$f"
