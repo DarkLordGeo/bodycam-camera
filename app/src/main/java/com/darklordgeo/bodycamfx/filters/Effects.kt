@@ -186,13 +186,16 @@ object Effects {
         ),
         glsl = """
             vec3 fx_sensorNoise(vec3 c) {
+                c = max(c, 0.0);
+                // sensor gain: small cameras lift the shadows in the dark instead of letting them go black
+                c = mix(c, pow(c, vec3(0.78)), uLowLight * 0.6);
                 float l = clamp(luma(c), 0.0, 1.0);
                 float shadow = 1.0 - smoothstep(0.0, 0.55, l);
                 vec2 fc = gl_FragCoord.xy;
                 float lumN = hash13(vec3(fc, uFrame)) - 0.5;
                 vec2 cc = fc * 0.5 + vec2(uFrame * 17.0, uFrame * 31.0);
                 vec3 chromaN = vec3(valueNoise(cc), valueNoise(cc + 41.3), valueNoise(cc + 87.1)) - 0.5;
-                float amount = uSensorNoise * (0.025 + 0.11 * shadow * (0.5 + uLowLight));
+                float amount = uSensorNoise * (0.035 + 0.24 * shadow * (0.5 + uLowLight));
                 c += (vec3(lumN) * 0.65 + chromaN * 0.55) * amount;
                 // low light: shadows lose colour and the black level lifts slightly toward blue-grey
                 c = mix(c, vec3(luma(c)), uLowLight * shadow * 0.45);

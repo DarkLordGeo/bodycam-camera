@@ -41,7 +41,7 @@ object BodycamPreset {
             Effects.motionBlur,
         ),
         defaults = mapOf(
-            "uDistortion" to 0.30f,
+            "uDistortion" to 0.27f,
             "uFisheye" to 0.14f,
             "uFov" to 0.97f,
             "uChromatic" to 0.30f,
@@ -51,7 +51,7 @@ object BodycamPreset {
             "uTemperature" to -0.12f,
             "uTint" to 0.14f,
             "uContrast" to 1.16f,
-            "uBlackPoint" to 0.025f,
+            "uBlackPoint" to 0.015f,
             "uShoulder" to 0.40f,
             "uSaturation" to 0.76f,
             "uShadowHue" to 0.48f,
