@@ -11,7 +11,11 @@ import android.view.Surface
 import androidx.camera.core.Camera
 import androidx.camera.core.CameraEffect
 import androidx.camera.core.CameraSelector
+import androidx.camera.core.ExperimentalGetImage
 import androidx.camera.core.FocusMeteringAction
+import androidx.camera.core.ImageAnalysis
+import androidx.camera.core.ImageProxy
+import androidx.camera.core.resolutionselector.ResolutionStrategy
 import androidx.camera.core.MeteringPointFactory
 import androidx.camera.core.MirrorMode
 import androidx.camera.core.Preview
@@ -47,6 +51,12 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
+import com.google.mlkit.vision.common.InputImage
+import com.google.mlkit.vision.segmentation.Segmentation
+import com.google.mlkit.vision.segmentation.Segmenter
+import com.google.mlkit.vision.segmentation.selfie.SelfieSegmenterOptions
+import java.nio.ByteBuffer
+import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
 
 enum class CaptureMode { PHOTO, VIDEO }
@@ -78,6 +88,8 @@ data class CameraUiState(
     val message: String? = null,
     val focusPoint: Pair<Float, Float>? = null,
     val focusSeq: Int = 0,
+    val outlineActive: Boolean = false,
+    val streamSize: String = "",
 )
 
 /** CameraX effect wrapper: routes Preview + VideoCapture through the GL processor. */
@@ -120,6 +132,9 @@ class CameraController(
     private var recordingStartedAt = 0L
     private var deviceOrientation = 0
     private var pendingWideZoom = false
+    private val analysisExecutor = Executors.newSingleThreadExecutor()
+    private var segmenter: Segmenter? = null
+    private var analysisBusy = false
     private var zoomLiveData: androidx.lifecycle.LiveData<androidx.camera.core.ZoomState>? = null
 
     // ------------------------------------------------------------------ binding
@@ -176,14 +191,28 @@ class CameraController(
                 .setMirrorMode(if (settings.mirrorSelfies) MirrorMode.MIRROR_MODE_ON_FRONT_ONLY else MirrorMode.MIRROR_MODE_OFF)
                 .build()
 
-            val group = UseCaseGroup.Builder()
+            fun group(withAnalysis: Boolean) = UseCaseGroup.Builder()
                 .addUseCase(preview)
                 .addUseCase(vc)
+                .apply { if (withAnalysis) addUseCase(buildAnalysis()) }
                 .addEffect(effect)
                 .build()
 
             p.unbindAll()
-            val cam = p.bindToLifecycle(owner, selector, group)
+            val wantOutline = settings.outline.enabled
+            var outlineBound = wantOutline
+            val cam = try {
+                p.bindToLifecycle(owner, selector, group(wantOutline))
+            } catch (t: Throwable) {
+                if (!wantOutline) throw t
+                // Some devices can't add a 3rd stream next to preview+video; keep the camera working.
+                Log.w(TAG, "Binding with person analysis failed; retrying without", t)
+                outlineBound = false
+                p.unbindAll()
+                p.bindToLifecycle(owner, selector, group(false)).also {
+                    _state.update { s -> s.copy(message = "People outline isn't supported with this camera") }
+                }
+            }
             camera = cam
             videoCapture = vc
 
@@ -206,8 +235,11 @@ class CameraController(
                     exposureStep = exp.exposureCompensationStep.toFloat(),
                     supportedResolutions = supported,
                     activeResolution = active,
+                    outlineActive = outlineBound,
                 )
             }
+            processor.outlineEnabled = outlineBound
+            publishRenderState()
             zoomLiveData?.removeObservers(owner)
             zoomLiveData = cam.cameraInfo.zoomState
             cam.cameraInfo.zoomState.observe(owner) { z ->
@@ -222,6 +254,63 @@ class CameraController(
         } catch (t: Throwable) {
             Log.e(TAG, "Camera bind failed", t)
             _state.update { it.copy(ready = false, message = "Camera unavailable: ${t.message}") }
+        }
+    }
+
+    private fun buildAnalysis(): ImageAnalysis {
+        val selector = ResolutionSelector.Builder()
+            .setAspectRatioStrategy(AspectRatioStrategy.RATIO_16_9_FALLBACK_AUTO_STRATEGY)
+            .setResolutionStrategy(
+                ResolutionStrategy(android.util.Size(640, 360), ResolutionStrategy.FALLBACK_RULE_CLOSEST_HIGHER_THEN_LOWER),
+            )
+            .build()
+        return ImageAnalysis.Builder()
+            .setResolutionSelector(selector)
+            .setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST)
+            .build()
+            .also { it.setAnalyzer(analysisExecutor) { proxy -> analyze(proxy) } }
+    }
+
+    private fun segmenter(): Segmenter = segmenter ?: Segmentation.getClient(
+        SelfieSegmenterOptions.Builder()
+            .setDetectorMode(SelfieSegmenterOptions.STREAM_MODE)
+            .enableRawSizeMask()
+            .build(),
+    ).also { segmenter = it }
+
+    /** Runs person segmentation on a low-res analysis frame and hands the mask to the GL thread. */
+    @androidx.annotation.OptIn(ExperimentalGetImage::class)
+    private fun analyze(proxy: ImageProxy) {
+        val media = proxy.image
+        if (media == null || analysisBusy || !settings.outline.enabled) {
+            proxy.close()
+            return
+        }
+        analysisBusy = true
+        val rotation = proxy.imageInfo.rotationDegrees
+        try {
+            segmenter().process(InputImage.fromMediaImage(media, rotation))
+                .addOnSuccessListener(analysisExecutor) { mask ->
+                    val w = mask.width
+                    val h = mask.height
+                    val src = mask.buffer
+                    src.rewind()
+                    val floats = src.asFloatBuffer()
+                    val out = ByteBuffer.allocateDirect(w * h)
+                    for (i in 0 until w * h) {
+                        out.put((floats.get(i).coerceIn(0f, 1f) * 255f).toInt().toByte())
+                    }
+                    out.rewind()
+                    processor.updatePersonMask(out, w, h, rotation)
+                }
+                .addOnFailureListener(analysisExecutor) { Log.w(TAG, "Segmentation failed", it) }
+                .addOnCompleteListener(analysisExecutor) {
+                    analysisBusy = false
+                    proxy.close()
+                }
+        } catch (t: Throwable) {
+            analysisBusy = false
+            proxy.close()
         }
     }
 
@@ -242,8 +331,11 @@ class CameraController(
         settings = new
         processor.qualityMode = new.qualityMode
         processor.mirrorSelfies = new.mirrorSelfies
-        if (new.hud != hud) { hud = new.hud; publishRenderState() }
-        if (old.resolution != new.resolution || old.bitrate != new.bitrate || old.mirrorSelfies != new.mirrorSelfies) rebind()
+        if (new.hud != hud) hud = new.hud
+        publishRenderState()
+        if (old.resolution != new.resolution || old.bitrate != new.bitrate || old.mirrorSelfies != new.mirrorSelfies ||
+            old.outline.enabled != new.outline.enabled
+        ) rebind()
     }
 
     fun setFilter(preset: FilterPreset, values: Map<String, Float>, intensity: Float) {
@@ -267,10 +359,34 @@ class CameraController(
     private fun publishRenderState() {
         val p = preset ?: return
         val overlay = if (PresetCapability.OVERLAY in p.capabilities) hud else hud.copy(enabled = false)
+        val values = if (_state.value.frontFacing) frontLensBoost(p, filterValues) else filterValues
         processor.renderState = RenderState.of(
-            p, filterValues, intensity, overlay,
+            p, values, intensity, overlay,
             recording = _state.value.recording, recordingStartedAtMs = recordingStartedAt,
+            globals = settings.outline.copy(enabled = settings.outline.enabled && _state.value.outlineActive).uniforms(),
         )
+    }
+
+    /**
+     * Front cameras are far narrower than a body camera, so the same lens settings look tame on a
+     * selfie. Wide-lens presets get extra curvature and grit there (the sliders still show the
+     * user's base values).
+     */
+    private fun frontLensBoost(p: FilterPreset, v: Map<String, Float>): Map<String, Float> {
+        if (PresetCapability.PREFERS_WIDE_LENS !in p.capabilities) return v
+        fun boost(key: String, f: (Float) -> Float): Pair<String, Float>? {
+            val spec = p.param(key) ?: return null
+            return key to spec.clamp(f(v[key] ?: spec.default))
+        }
+        val boosted = listOfNotNull(
+            boost("uDistortion") { it * 1.6f + 0.06f },
+            boost("uFisheye") { it * 1.5f + 0.08f },
+            boost("uLensFill") { it * 0.8f },
+            boost("uSensorNoise") { it * 1.25f },
+            boost("uGrain") { it * 1.2f },
+            boost("uSharpen") { it + 0.1f },
+        ).toMap()
+        return v + boosted
     }
 
     fun renderStateFor(p: FilterPreset, values: Map<String, Float>): RenderState =
@@ -415,6 +531,8 @@ class CameraController(
     fun release() {
         stopRecording()
         provider?.unbindAll()
+        segmenter?.close()
+        analysisExecutor.shutdown()
         processor.release()
     }
 
@@ -433,6 +551,8 @@ class CameraController(
     override fun onTierChanged(tier: QualityTier) = _state.update { it.copy(tier = tier) }
 
     override fun onFps(fps: Float) = _state.update { it.copy(fps = fps) }
+
+    override fun onStreamSize(width: Int, height: Int) = _state.update { it.copy(streamSize = "${width}×$height") }
 
     override fun onError(message: String) = _state.update { it.copy(message = message) }
 

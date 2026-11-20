@@ -12,6 +12,7 @@ import android.os.SystemClock
 import android.util.Log
 import android.util.Size
 import android.view.Surface
+import androidx.camera.core.CameraEffect
 import androidx.camera.core.SurfaceOutput
 import androidx.camera.core.SurfaceProcessor
 import androidx.camera.core.SurfaceRequest
@@ -33,6 +34,7 @@ class GlFilterProcessor(context: Context, private val listener: Listener) : Surf
         fun onGpuReady(caps: DeviceCapabilities, tier: QualityTier)
         fun onTierChanged(tier: QualityTier)
         fun onFps(fps: Float)
+        fun onStreamSize(width: Int, height: Int)
         fun onError(message: String)
     }
 
@@ -77,6 +79,9 @@ class GlFilterProcessor(context: Context, private val listener: Listener) : Surf
     private val invSt = FloatArray(16)
     private val updated = FloatArray(16)
     private val blitMatrix = FloatArray(16)
+    /** The preview output's processed-frame → screen transform, reused so photos match the viewfinder. */
+    private val previewBlit = FloatArray(16)
+    private var previewSize: Size? = null
     private val startNs = SystemClock.elapsedRealtimeNanos()
     private var frameIndex = 0
 
@@ -183,6 +188,7 @@ class GlFilterProcessor(context: Context, private val listener: Listener) : Surf
         st.setDefaultBufferSize(request.resolution.width, request.resolution.height)
         val surface = Surface(st)
         val slot = Input(tex, st, surface, request.resolution)
+        listener.onStreamSize(request.resolution.width, request.resolution.height)
         input = slot
         st.setOnFrameAvailableListener({ onFrame(slot) }, handler)
         request.provideSurface(surface, executor) {
@@ -260,6 +266,10 @@ class GlFilterProcessor(context: Context, private val listener: Listener) : Surf
             for ((surfaceOutput, out) in outputs.entries.toList()) {
                 surfaceOutput.updateTransformMatrix(updated, stMatrix)
                 Matrix.multiplyMM(blitMatrix, 0, invSt, 0, updated, 0)
+                if (surfaceOutput.targets and CameraEffect.PREVIEW != 0) {
+                    System.arraycopy(blitMatrix, 0, previewBlit, 0, 16)
+                    previewSize = out.size
+                }
                 core.makeCurrent(out.eglSurface)
                 r.blit(tex, blitMatrix, out.size.width, out.size.height)
                 core.setPresentationTime(out.eglSurface, ts)
@@ -362,39 +372,77 @@ class GlFilterProcessor(context: Context, private val listener: Listener) : Surf
         if (result.isNotEmpty()) req.callback(result)
     }
 
+    /**
+     * Photo = the same pass-1 shader at full stream resolution, then drawn through the *preview's*
+     * CameraX transform. That transform carries the crop, rotation, mirroring and any non-square
+     * buffer scaling CameraX applies, so the photo has exactly the viewfinder's geometry
+     * (rendering the raw buffer directly can come out stretched on some devices).
+     */
     private fun renderPhoto(slot: Input, state: RenderState, req: PhotoRequest, timeSec: Float, now: Long) {
         val r = renderer ?: return req.callback(null)
         val rotation = finalRotation()
         val mirror = mirrorOutput
+        val front = frontFacing
+        val device = deviceOrientation
         val maxSide = minOf(caps?.maxTextureSize ?: 4096, 4096)
-        val size = slot.size.let {
+        val full = slot.size.let {
             val long = maxOf(it.width, it.height)
             if (long <= maxSide) it else {
                 val s = maxSide.toFloat() / long
                 Size((it.width * s).toInt() and 1.inv(), (it.height * s).toInt() and 1.inv())
             }
         }
-        var target: RenderTarget? = null
+        val pv = previewSize
+        val viaPreview = pv != null
+        val outSize = if (pv == null) full else {
+            val s = maxOf(full.width, full.height).toFloat() / maxOf(pv.width, pv.height)
+            Size((pv.width * s).toInt() and 1.inv(), (pv.height * s).toInt() and 1.inv())
+        }
+        val m = previewBlit.copyOf()
+        // 2x2 determinant < 0 => the preview transform mirrors (front camera viewfinder).
+        val previewMirrored = viaPreview && (m[0] * m[5] - m[1] * m[4]) < 0f
+        val previewBaked = viaPreview && outSize.height > outSize.width
+
+        var effect: RenderTarget? = null
+        var photo: RenderTarget? = null
         try {
-            target = RenderTarget(size.width, size.height)
-            r.renderEffect(state, QualityTier.HIGH, slot.texture, stMatrix, target, r.latestTexture,
+            effect = RenderTarget(full.width, full.height)
+            r.renderEffect(state, QualityTier.HIGH, slot.texture, stMatrix, effect, r.latestTexture,
                 timeSec, frameIndex, rotation, now, mirror)
-            val buf = ByteBuffer.allocateDirect(size.width * size.height * 4).order(ByteOrder.nativeOrder())
-            GLES30.glReadPixels(0, 0, size.width, size.height, GLES30.GL_RGBA, GLES30.GL_UNSIGNED_BYTE, buf)
+            val readTarget = if (viaPreview) {
+                val pt = RenderTarget(outSize.width, outSize.height)
+                photo = pt
+                pt.bind()
+                r.blitToBound(effect.texture, m)
+                pt
+            } else effect
+            val buf = ByteBuffer.allocateDirect(outSize.width * outSize.height * 4).order(ByteOrder.nativeOrder())
+            readTarget.bind()
+            GLES30.glReadPixels(0, 0, outSize.width, outSize.height, GLES30.GL_RGBA, GLES30.GL_UNSIGNED_BYTE, buf)
             GLES30.glBindFramebuffer(GLES30.GL_FRAMEBUFFER, 0)
-            target.release()
-            target = null
+            photo?.release(); photo = null
+            effect.release(); effect = null
             photoExecutor.execute {
                 try {
                     buf.rewind()
-                    val raw = Bitmap.createBitmap(size.width, size.height, Bitmap.Config.ARGB_8888)
+                    val raw = Bitmap.createBitmap(outSize.width, outSize.height, Bitmap.Config.ARGB_8888)
                     raw.copyPixelsFromBuffer(buf)
-                    val m = android.graphics.Matrix().apply {
+                    val t = android.graphics.Matrix().apply {
                         postScale(1f, -1f) // GL rows start at the bottom
-                        postRotate(rotation.toFloat())
-                        if (mirror) postScale(-1f, 1f)
+                        if (previewMirrored) postScale(-1f, 1f) // back to the camera's true view
+                        if (previewBaked) {
+                            // Upright for a portrait screen; add the physical orientation.
+                            when {
+                                !front -> postRotate(device.toFloat())
+                                mirror -> { postScale(-1f, 1f); postRotate(device.toFloat()) }
+                                else -> postRotate(-device.toFloat())
+                            }
+                        } else {
+                            postRotate(rotation.toFloat())
+                            if (mirror) postScale(-1f, 1f)
+                        }
                     }
-                    val upright = Bitmap.createBitmap(raw, 0, 0, raw.width, raw.height, m, true)
+                    val upright = Bitmap.createBitmap(raw, 0, 0, raw.width, raw.height, t, true)
                     if (upright !== raw) raw.recycle()
                     req.callback(upright)
                 } catch (t: Throwable) {
@@ -404,7 +452,8 @@ class GlFilterProcessor(context: Context, private val listener: Listener) : Surf
             }
         } catch (t: Throwable) {
             Log.e(TAG, "Photo render failed", t)
-            target?.release()
+            photo?.release()
+            effect?.release()
             req.callback(null)
         }
     }

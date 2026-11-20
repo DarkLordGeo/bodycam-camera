@@ -89,6 +89,8 @@ dependencies {
     implementation("androidx.concurrent:concurrent-futures-ktx:1.2.0")
 
     implementation("dev.chrisbanes.haze:haze:1.2.2")
+    // On-device person segmentation for the People Outline mode (model bundled in the APK).
+    implementation("com.google.mlkit:segmentation-selfie:16.0.0-beta6")
 
     testImplementation("junit:junit:4.13.2")
     if (screenshots) {

@@ -4,6 +4,7 @@ import android.content.Context
 import android.content.SharedPreferences
 import com.darklordgeo.bodycamfx.filters.FilterRegistry
 import com.darklordgeo.bodycamfx.render.HudConfig
+import com.darklordgeo.bodycamfx.render.OutlineConfig
 import com.darklordgeo.bodycamfx.render.QualityMode
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -34,6 +35,7 @@ data class AppSettings(
     val useUltraWide: Boolean = true,
     val qualityMode: QualityMode = QualityMode.AUTO,
     val hud: HudConfig = HudConfig(),
+    val outline: OutlineConfig = OutlineConfig(),
 )
 
 class SettingsRepository(context: Context) {
@@ -73,6 +75,12 @@ class SettingsRepository(context: Context) {
                 showRecIndicator = prefs.getBoolean("hudRec", d.hud.showRecIndicator),
                 label = prefs.getString("hudLabel", d.hud.label) ?: d.hud.label,
             ),
+            outline = OutlineConfig(
+                enabled = prefs.getBoolean("outlineEnabled", d.outline.enabled),
+                hue = prefs.getFloat("outlineHue", d.outline.hue),
+                white = prefs.getBoolean("outlineWhite", d.outline.white),
+                width = prefs.getFloat("outlineWidth", d.outline.width),
+            ),
         )
     }
 
@@ -95,6 +103,10 @@ class SettingsRepository(context: Context) {
             .putBoolean("hudTimestamp", s.hud.showTimestamp)
             .putBoolean("hudRec", s.hud.showRecIndicator)
             .putString("hudLabel", s.hud.label)
+            .putBoolean("outlineEnabled", s.outline.enabled)
+            .putFloat("outlineHue", s.outline.hue)
+            .putBoolean("outlineWhite", s.outline.white)
+            .putFloat("outlineWidth", s.outline.width)
             .apply()
     }
 }

@@ -107,6 +107,21 @@ fun SettingsScreen(
                 Hint("On: saved selfies match the mirrored viewfinder. Off: saved as the camera sees them.")
             }
 
+            Section("People outline") {
+                QuickToggle("Outline people", settings.outline.enabled) { on -> onUpdate { it.copy(outline = it.outline.copy(enabled = on)) } }
+                Label("Color")
+                Choices(OutlineColor.entries, OutlineColor.of(settings.outline), { it.label }) { c ->
+                    onUpdate { it.copy(outline = it.outline.copy(hue = c.hue, white = c.white)) }
+                }
+                Spacer(Modifier.height(Space.s))
+                LabeledSlider(
+                    "Width", settings.outline.width, 1f..6f,
+                    { v -> onUpdate { it.copy(outline = it.outline.copy(width = v)) } },
+                    String.format(java.util.Locale.US, "%.1f", settings.outline.width),
+                )
+                Hint("Detects people on-device (ML Kit) and draws an outer outline, also in photos and videos. Works best within a few metres; uses extra battery.")
+            }
+
             Section("Recording HUD") {
                 QuickToggle("Show HUD overlay", settings.hud.enabled) { on -> onUpdate { it.copy(hud = it.hud.copy(enabled = on)) } }
                 QuickToggle("Timestamp", settings.hud.showTimestamp) { on -> onUpdate { it.copy(hud = it.hud.copy(showTimestamp = on)) } }
@@ -146,8 +161,19 @@ fun SettingsScreen(
                     Info("Device tier", it.recommendedTier.name.lowercase())
                 }
                 if (camera.fps > 0f) Info("Preview", "${camera.fps.toInt()} fps")
+                if (camera.streamSize.isNotEmpty()) Info("Camera stream", camera.streamSize)
             }
         }
+    }
+}
+
+private enum class OutlineColor(val label: String, val hue: Float, val white: Boolean) {
+    RED("Red", 0f, false), AMBER("Amber", 0.1f, false), GREEN("Green", 0.33f, false),
+    CYAN("Cyan", 0.5f, false), WHITE("White", 0f, true);
+
+    companion object {
+        fun of(o: com.darklordgeo.bodycamfx.render.OutlineConfig): OutlineColor =
+            if (o.white) WHITE else entries.filter { !it.white }.minBy { kotlin.math.abs(it.hue - o.hue) }
     }
 }
 

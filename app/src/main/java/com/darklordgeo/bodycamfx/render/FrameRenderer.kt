@@ -168,6 +168,16 @@ class FrameRenderer(private val onShaderError: (String) -> Unit) {
         GLES30.glDrawArrays(GLES30.GL_TRIANGLES, 0, 3)
     }
 
+    /** Draws [texture] into whatever framebuffer + viewport is currently bound. */
+    fun blitToBound(texture: Int, matrix: FloatArray) {
+        GLES30.glUseProgram(blitProgram)
+        GLES30.glActiveTexture(GLES30.GL_TEXTURE0)
+        GLES30.glBindTexture(GLES30.GL_TEXTURE_2D, texture)
+        GLES30.glUniform1i(blitLocTex, 0)
+        GLES30.glUniformMatrix4fv(blitLocMatrix, 1, false, matrix, 0)
+        GLES30.glDrawArrays(GLES30.GL_TRIANGLES, 0, 3)
+    }
+
     /** Drops compiled programs (e.g. after the tier changes they are recompiled lazily). */
     fun clearPrograms() {
         programs.values.forEach { GLES30.glDeleteProgram(it.program) }

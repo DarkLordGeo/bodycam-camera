@@ -232,6 +232,15 @@ fun CameraScreen(
                     }
                 }
                 GlassIconButton(
+                    icon = AppIcons.PersonOutline,
+                    contentDescription = if (settings.outline.enabled) "Turn people outline off" else "Turn people outline on",
+                    onClick = { onUpdateSettings { it.copy(outline = it.outline.copy(enabled = !it.outline.enabled)) } },
+                    enabled = !ui.recording,
+                    active = settings.outline.enabled,
+                    iconRotation = iconRotation,
+                )
+                Spacer(Modifier.width(Space.s))
+                GlassIconButton(
                     icon = AppIcons.Tune,
                     contentDescription = "Camera settings",
                     onClick = { showQuick = true },
@@ -400,6 +409,7 @@ private fun QuickSettings(
         }
     }
     Spacer(Modifier.height(Space.m))
+    QuickToggle("People outline", settings.outline.enabled) { on -> onUpdate { it.copy(outline = it.outline.copy(enabled = on)) } }
     QuickToggle("Recording HUD overlay", settings.hud.enabled) { on -> onUpdate { it.copy(hud = it.hud.copy(enabled = on)) } }
     QuickToggle("Record audio", settings.recordAudio) { on -> onUpdate { it.copy(recordAudio = on) } }
     QuickToggle("Mirror selfies", settings.mirrorSelfies) { on -> onUpdate { it.copy(mirrorSelfies = on) } }

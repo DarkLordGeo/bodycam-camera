@@ -133,6 +133,13 @@ object AppIcons {
         stroke(2f) { moveTo(15f, 5f); lineTo(8f, 12f); lineTo(15f, 19f) }
     }
 
+    /** Person with an outline ring: People Outline mode. */
+    val PersonOutline: ImageVector = icon("PersonOutline") {
+        stroke { circle(12f, 8.2f, 3.4f) }
+        stroke { moveTo(5.5f, 20f); arcTo(6.5f, 6.5f, 0f, false, true, 18.5f, 20f) }
+        stroke(1.2f) { moveTo(2.5f, 6f); lineTo(2.5f, 2.5f); lineTo(6f, 2.5f); moveTo(18f, 2.5f); lineTo(21.5f, 2.5f); lineTo(21.5f, 6f) }
+    }
+
     val Video: ImageVector = icon("Video") {
         stroke { roundRect(3f, 6.5f, 15.5f, 17.5f, 2.5f) }
         stroke { moveTo(15.5f, 10.5f); lineTo(21f, 7.5f); lineTo(21f, 16.5f); lineTo(15.5f, 13.5f) }
